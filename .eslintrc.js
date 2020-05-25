@@ -22,9 +22,6 @@ module.exports = {
     semi: ["error", "always"],
     "no-console": "off",
     "no-underscore-dangle": "off",
-    "no-unused-vars": [
-      "error",
-      { argsIgnorePattern: "(request|response|next)" }
-    ]
+    "no-unused-vars": ["error"]
   }
 };

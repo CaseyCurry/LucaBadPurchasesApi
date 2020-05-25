@@ -2,10 +2,11 @@ import { BaseAggregate } from "./base-aggregate";
 
 // TODO: unit test
 const Purchase = class extends BaseAggregate {
-  constructor({ _rev, id, tenantId, isFlagged, isIgnored, isBad }) {
-    super(_rev);
+  constructor({ id, tenantId, dateFlagged, isFlagged, isIgnored, isBad }) {
+    super();
     this.id = id;
     this.tenantId = tenantId;
+    this.dateFlagged = dateFlagged;
     this.isFlagged = isFlagged;
     this.isIgnored = isIgnored;
     this.isBad = isBad;
@@ -18,10 +19,12 @@ const Purchase = class extends BaseAggregate {
 
     // skip purchases less than 200 unless...
     if (amount < 200) {
-      // ...the category is overridden for this rule
+      // ...this rule is overridden for this category
       if (
-        categorization.category !== "housing" &&
-        categorization.subcategory !== "storage"
+        !(
+          categorization.category === "housing" &&
+          categorization.subcategory === "storage"
+        )
       ) {
         return;
       }
@@ -58,19 +61,23 @@ const Purchase = class extends BaseAggregate {
   }
 
   flag() {
+    // FIX: meh... three mutually exclusive boolean properties. Mind how the table is indexed.
     this.isFlagged = true;
-    this.isIgnored = !this.isFlagged;
-    this.isBad = !this.isFlagged;
+    this.isIgnored = false;
+    this.isBad = false;
+    this.dateFlagged = new Date().toISOString();
   }
 
   ignore() {
     this.isIgnored = true;
-    this.isBad = !this.isIgnored;
+    this.isBad = false;
+    this.isFlagged = false;
   }
 
   confirmBad() {
+    this.isBad = true;
     this.isIgnored = false;
-    this.isBad = !this.isIgnored;
+    this.isFlagged = false;
   }
 };
 

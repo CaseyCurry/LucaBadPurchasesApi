@@ -1,0 +1,161 @@
+service: ${file(package.json):name}
+
+plugins:
+  - serverless-webpack
+  - serverless-pseudo-parameters
+  - serverless-dynamodb-local
+  - serverless-offline-sns
+  - serverless-offline
+  - serverless-prune-plugin
+
+custom:
+  secrets: ${file(config/secrets.json)}
+  webpack:
+    includeModules: true
+  dynamodb:
+    start:
+      port: 9000
+      inMemory: true
+      migrate: true
+  serverless-offline-sns:
+    port: 9002
+    debug: false
+  prune:
+    automatic: true
+    number: 2
+
+provider:
+  name: aws
+  runtime: nodejs8.10
+  stage: ${opt:stage, "dev"}
+  region: ${opt:region, "us-west-2"}
+  stackName:
+    name: ${self:provider.stage}-${self:service}
+  memorySize: 128
+  deploymentBucket:
+    name: ${self:provider.stage}-deployment-${self:service}
+  versionFunctions: false
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:Query
+        - dynamodb:PutItem
+      Resource:
+        - "arn:aws:dynamodb:${self:provider.region}:#{AWS::AccountId}:table/${self:provider.stackName.name}-purchases"
+        - "arn:aws:dynamodb:${self:provider.region}:#{AWS::AccountId}:table/${self:provider.stackName.name}-purchases/index/*"
+    - Effect: Allow
+      Action:
+        - sns:Publish
+      Resource:
+        - "arn:aws:sns:${self:provider.region}:#{AWS::AccountId}:${self:provider.stackName.name}-evaluate-transaction-dlq"
+
+package:
+  individually: true
+
+functions:
+  evaluate-transaction:
+    name: ${self:provider.stackName.name}-evaluate-transaction
+    handler: src/application-services/evaluate-transaction-handler.evaluate
+    events:
+      - sns: arn:aws:sns:${self:provider.region}:#{AWS::AccountId}:dev-luca-checking-acct-app-svcs-transaction-categorized
+    # TODO: forward to SQS instead of SNS
+    onError:
+      Ref: EvaluateTransactionDlq
+    environment:
+      purchasesTable: ${self:provider.stackName.name}-purchases
+  get-flagged-purchases:
+    name: ${self:provider.stackName.name}-get-flagged-purchases
+    handler: src/application-services/get-flagged-purchases-handler.get
+    events:
+      - http:
+          path: /purchases/flagged
+          method: GET
+          cors: true
+    environment:
+      jwtSecret: ${self:custom.secrets.jwtSecret}
+      purchasesTable: ${self:provider.stackName.name}-purchases
+  get-bad-purchases:
+    name: ${self:provider.stackName.name}-get-bad-purchases
+    handler: src/application-services/get-bad-purchases-handler.get
+    events:
+      - http:
+          path: /purchases/bad
+          method: GET
+          cors: true
+    environment:
+      jwtSecret: ${self:custom.secrets.jwtSecret}
+      purchasesTable: ${self:provider.stackName.name}-purchases
+  confirm-bad:
+    name: ${self:provider.stackName.name}-confirm-bad-purchase
+    handler: src/application-services/confirm-bad-purchase-handler.confirm
+    events:
+      - http:
+          path: /purchases/{id}/bad
+          method: POST
+          cors: true
+          request:
+            parameters:
+              paths:
+                id: true
+    environment:
+      jwtSecret: ${self:custom.secrets.jwtSecret}
+      purchasesTable: ${self:provider.stackName.name}-purchases
+  ignore:
+    name: ${self:provider.stackName.name}-ignore-purchase
+    handler: src/application-services/ignore-purchase-handler.ignore
+    events:
+      - http:
+          path: /purchases/{id}/flagged
+          method: DELETE
+          cors: true
+          request:
+            parameters:
+              paths:
+                id: true
+    environment:
+      jwtSecret: ${self:custom.secrets.jwtSecret}
+      purchasesTable: ${self:provider.stackName.name}-purchases
+
+resources:
+  Resources:
+    EvaluateTransactionDlq:
+      Type: AWS::SNS::Topic
+      Properties:
+        TopicName: ${self:provider.stackName.name}-evaluate-transaction-dlq
+    PurchasesTable:
+      Type: "AWS::DynamoDB::Table"
+      DeletionPolicy: Retain
+      Properties:
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: tenantId
+            AttributeType: S
+          - AttributeName: id
+            AttributeType: S
+          - AttributeName: isFlaggedIndexed
+            AttributeType: N
+          - AttributeName: isBadIndexed
+            AttributeType: N
+        KeySchema:
+          - AttributeName: tenantId
+            KeyType: HASH
+          - AttributeName: id
+            KeyType: RANGE
+        TableName: ${self:provider.stackName.name}-purchases
+        LocalSecondaryIndexes:
+          - IndexName: "ByFlagged"
+            KeySchema:
+              - AttributeName: tenantId
+                KeyType: HASH
+              - AttributeName: isFlaggedIndexed
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+          - IndexName: "ByBad"
+            KeySchema:
+              - AttributeName: tenantId
+                KeyType: HASH
+              - AttributeName: isBadIndexed
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL

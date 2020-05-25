@@ -3,4 +3,6 @@
 *.log
 /spec/coverage/*
 .nyc_output
-secret.js
+/package
+/config/secrets*
+.serverless
